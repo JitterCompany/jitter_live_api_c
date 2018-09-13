@@ -35,9 +35,16 @@ endif()
 # Dependencies
 #------------------------------------------------------------------------------
 
-#CPM_AddModule("c_utils"
-#    GIT_REPOSITORY "https://github.com/JitterCompany/c_utils.git"
-#    GIT_TAG "1.4.5")
+# mqtt_c is 'exported': this makes it available to the paren project.
+# this is required because we depend on mqtt_c in live_api.h
+CPM_AddModule("mqtt_c"
+    GIT_REPOSITORY "https://github.com/JitterCompany/mqtt_c.git"
+    GIT_TAG "0.5.0"
+    EXPORT_MODULE TRUE)
+
+CPM_AddModule("cpm_jsmn"
+    GIT_REPOSITORY "https://github.com/JitterCompany/cpm_jsmn.git"
+    GIT_TAG "1.0.0")
 
 
 CPM_InitModule(${CPM_MODULE_NAME})
