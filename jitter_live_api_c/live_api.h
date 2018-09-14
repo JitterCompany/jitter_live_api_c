@@ -50,6 +50,8 @@ typedef struct {
     LogFunc log_warning;
     LogFunc log_error;
     const char *client_id;
+    const char *server_addr;
+    int server_port;
     char username[LIVE_API_MAX_USERNAME_LEN + 1];
     enum LiveAPIState state;
     LiveAPISendTask current_task;
@@ -66,9 +68,18 @@ typedef struct {
     MQTTClient mqtt;
 } LiveAPI;
 
+
+/**
+ * Initialize the live_api
+ *
+ * NOTE: parameters client_id, server_addr and send_list should point to memory
+ * that stays valid during the lifetime of the LiveAPI object: they will be
+ * accessed after live_api_init() returns.
+ */
 void live_api_init(LiveAPI *ctx, StorageHAL storage,
         SocketHAL socket, TimestampFunc time_func,
-        const char *client_id, LiveAPISendQueue *send_list);
+        const char *client_id, const char *server_addr, const int server_port,
+        LiveAPISendQueue *send_list);
 
 void live_api_set_logging(LiveAPI *ctx,
         LogFunc debug, LogFunc warn, LogFunc err);

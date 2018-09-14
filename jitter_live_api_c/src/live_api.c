@@ -71,13 +71,16 @@ static const LiveAPIStateFunc g_state[] = {
 
 void live_api_init(LiveAPI *ctx, StorageHAL storage,
         SocketHAL socket, TimestampFunc time_func,
-        const char *client_id, LiveAPISendQueue *send_list)
+        const char *client_id, const char *server_addr, const int server_port,
+        LiveAPISendQueue *send_list)
 {
     ctx->log_debug = dummy_log;
     ctx->log_warning = dummy_log;
     ctx->log_error = dummy_log;
 
     ctx->client_id = client_id;
+    ctx->server_addr = server_addr;
+    ctx->server_port = server_port;
     memset(ctx->username, 0, sizeof(ctx->username));
     ctx->state = LIVE_API_NONE;
     memset(&ctx->current_task, 0, sizeof(LiveAPISendTask));
@@ -157,7 +160,7 @@ static void ensure_connection(LiveAPI *ctx)
 
         // connect with username+pw
         if(!MQTT_client_connect(&ctx->mqtt,
-                    SERVER_HOSTNAME, SERVER_PORT, ctx->client_id,
+                    ctx->server_addr, ctx->server_port, ctx->client_id,
                     credentials.username, credentials.password,
                     &will)) {
             ctx->log_warning("live_api: MQTT connect failed!");
@@ -168,7 +171,7 @@ static void ensure_connection(LiveAPI *ctx)
 
     } else {
         // connect anonymous: register for new login credentials
-        if(!MQTT_client_connect(&ctx->mqtt, SERVER_HOSTNAME, SERVER_PORT,
+        if(!MQTT_client_connect(&ctx->mqtt, ctx->server_addr, ctx->server_port,
                     ctx->client_id, NULL, NULL, NULL)) {
             ctx->log_warning("live_api: registering: MQTT connect failed!");
             return;
@@ -400,7 +403,7 @@ static bool get_login_credentials(const LiveAPI *ctx, LoginCredentials *result)
 {
     const StorageHAL *storage = &ctx->storage;
     void *storage_ctx = storage->ctx;
-    const size_t host_len = strlen(SERVER_HOSTNAME);
+    const size_t host_len = strlen(ctx->server_addr);
     char host[host_len];
 
     bool success = true;
@@ -409,7 +412,7 @@ static bool get_login_credentials(const LiveAPI *ctx, LoginCredentials *result)
         // no hostname stored
         success = false;
     }
-    if(strncmp(SERVER_HOSTNAME, host, sizeof(host))) {
+    if(strncmp(ctx->server_addr, host, sizeof(host))) {
         // hostname mismatch
         success = false;
     }
@@ -488,7 +491,7 @@ static void on_message(void *void_ctx, const char *topic,
                 return;
             }
             if(!storage->write(storage_ctx, RESOURCE_HOST,
-                        SERVER_HOSTNAME, strlen(SERVER_HOSTNAME))) {
+                        ctx->server_addr, strlen(ctx->server_addr))) {
                 ctx->log_warning("live_api: saving 'random' failed!");
                 return;
             }
