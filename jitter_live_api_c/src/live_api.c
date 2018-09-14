@@ -5,7 +5,7 @@
 
 // TODO tune these values
 #define KEEPALIVE_INTERVAL 30
-#define MQTT_TIMEOUT 10
+#define MQTT_TIMEOUT 30
 #define OFFLINE_REQUEST_INTERVAL 5
 
 
