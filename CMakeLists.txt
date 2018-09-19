@@ -39,7 +39,7 @@ endif()
 # this is required because we depend on mqtt_c in live_api.h
 CPM_AddModule("mqtt_c"
     GIT_REPOSITORY "https://github.com/JitterCompany/mqtt_c.git"
-    GIT_TAG "0.5.0"
+    GIT_TAG "0.6.0"
     EXPORT_MODULE TRUE)
 
 CPM_AddModule("cpm_jsmn"
