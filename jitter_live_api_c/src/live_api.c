@@ -2,12 +2,25 @@
 #include <string.h>
 #include <stdio.h>
 #include "live_api_parse.h"
+#include <c_utils/round.h>
 
 // TODO tune these values
 #define KEEPALIVE_INTERVAL 30
 #define MQTT_TIMEOUT 30
 #define OFFLINE_REQUEST_INTERVAL 5
 
+typedef struct {
+    uint16_t packet_number;
+    uint16_t total_packets;
+} FixedDataPacketHeader;
+
+typedef union {
+    struct {
+        FixedDataPacketHeader header;
+        uint8_t data[LIVE_API_FIXED_DATA_PACKET_SIZE];
+    };
+    uint8_t as_bytes[sizeof(FixedDataPacketHeader) + LIVE_API_FIXED_DATA_PACKET_SIZE];
+} FixedDataPacket;
 
 typedef struct {
     char username[LIVE_API_MAX_USERNAME_LEN];
@@ -43,6 +56,8 @@ static void on_message(void *void_ctx, const char *topic,
 static bool get_login_credentials(const LiveAPI *ctx, LoginCredentials *result);
 static bool is_verified(const LiveAPI *ctx);
 
+// fixed-data related
+static size_t calculate_num_packets(size_t num_data_bytes);
 
 typedef void(*LiveAPIStateFunc)(LiveAPI *ctx);
 static const LiveAPIStateFunc g_state[] = {
@@ -84,6 +99,7 @@ void live_api_init(LiveAPI *ctx, StorageHAL storage,
     memset(ctx->username, 0, sizeof(ctx->username));
     ctx->state = LIVE_API_NONE;
     memset(&ctx->current_task, 0, sizeof(LiveAPISendTask));
+    memset(&ctx->current_task_state, 0, sizeof(LiveAPISendTaskState));
 
     ctx->time_func = time_func;
     ctx->offline_timestamp = 0;
@@ -127,7 +143,13 @@ static bool update_current_task(LiveAPI *ctx)
     if(ctx->current_task.type != LIVE_API_TASK_NONE) {
         return true;
     }
-    return live_api_send_queue_get_task(ctx->send_list, &ctx->current_task);
+    if(live_api_send_queue_get_task(ctx->send_list, &ctx->current_task)) {
+        ctx->current_task_state.offset = 0;
+        ctx->current_task_state.total = calculate_num_packets(ctx->current_task.size);
+        ctx->current_task_state.crc = 0;
+        return true;
+    }
+    return false;
 }
 
 // ensure there is a connection: create a new connection if required
@@ -266,6 +288,7 @@ static void state_subscribe(LiveAPI *ctx)
         if(!is_verified(ctx)) {
             set_state(ctx, LIVE_API_VERIFY);
         } else {
+            ctx->log_debug("live_api: is verified!");
             set_state(ctx, LIVE_API_HI);
         }
     }
@@ -319,38 +342,120 @@ static void state_hi(LiveAPI *ctx)
 static void state_idle(LiveAPI *ctx)
 {
     LiveAPISendTask *task = &ctx->current_task;
-    if(task->type != LIVE_API_TASK_NONE) {
-        // while there is something to do, reset the offline interval
-        ctx->offline_timestamp = ctx->time_func();
+    if(task->type == LIVE_API_TASK_NONE) {
 
-        // 'plain' task: publish it and mark it as 'done'
-        if(task->type == LIVE_API_TASK_PLAIN) {
-
-            char topic[64];
-            snprintf(topic, sizeof(topic),
-                    "f/%s/%s", ctx->username, task->topic);
-            uint8_t buffer[LIVE_API_MAX_SEND_LEN];
-            const size_t len = live_api_send_queue_get_data(ctx->send_list,
-                    task->topic_id, buffer, sizeof(buffer), 0);
-            if(MQTT_client_publish(&ctx->mqtt, topic, buffer, len)) {
-                live_api_send_queue_task_done(ctx->send_list, task->topic_id);
-                task->type = LIVE_API_TASK_NONE;
-            } else {
-                ctx->log_warning("publish failed");
-            }
-
-        // TODO implement support for other types
-        } else {
-            ctx->log_warning("task type '%d' not supported!", task->type);
-            task->type = LIVE_API_TASK_NONE;
-        }
-
-
-    } else {
         const int diff = ctx->time_func() - ctx->offline_timestamp;
         if(diff > OFFLINE_REQUEST_INTERVAL) {
             set_state(ctx, LIVE_API_WANT_OFFLINE);
         }
+        return;
+    }
+
+    // while there is something to do, reset the offline interval
+    ctx->offline_timestamp = ctx->time_func();
+
+    // even while a fixeddata task is busy, other tasks have more priority
+    LiveAPISendTask sub_task;
+    if(task->type == LIVE_API_TASK_FIXED_DATA) {
+        if(live_api_send_queue_get_task(ctx->send_list, &sub_task)) {
+            task = &sub_task;
+        }
+    }
+
+    char topic[64];
+    snprintf(topic, sizeof(topic),
+            "f/%s/%s", ctx->username, task->topic);
+
+    // 'plain' task: publish it and mark it as 'done'
+    if(task->type == LIVE_API_TASK_PLAIN) {
+
+        uint8_t buffer[LIVE_API_MAX_SEND_LEN];
+        const size_t len = live_api_send_queue_get_data(ctx->send_list,
+                task->topic_id, buffer, sizeof(buffer), 0);
+        if(MQTT_client_publish(&ctx->mqtt, topic, buffer, len)) {
+            live_api_send_queue_task_done(ctx->send_list, task->topic_id);
+            task->type = LIVE_API_TASK_NONE;
+        } else {
+            ctx->log_warning("publish failed");
+        }
+
+
+    // 'fixeddata' task: send data in chunks,
+    // or send an empty 'announce' chunk if another task is busy
+    } else if(task->type == LIVE_API_TASK_FIXED_DATA) {
+
+        // TODO create a new file with the fixeddata handling logic,
+        // this function is getting tooo long
+        // TODO handle incoming acks to update offset and finish the thask
+
+        FixedDataPacket packet;
+
+        // send the next chunk for this fixeddata task
+        if(task != &sub_task) {
+            LiveAPISendTaskState *task_state = &ctx->current_task_state;
+            if(task_state->offset >= task_state->total) {
+                // all packets already sent, waiting for ack
+                return;
+            }
+            packet.header.packet_number = task_state->offset;
+            packet.header.total_packets = task_state->total;
+
+            const bool is_last = ((packet.header.packet_number + 1)
+                    == packet.header.total_packets);
+
+            // the last packet includes the crc32 checksum
+            size_t max_bytes = sizeof(packet.data);
+            if(is_last) {
+                max_bytes-= sizeof(task_state->crc);
+            }
+            
+            const size_t byte_offset = (task_state->offset
+                    * LIVE_API_FIXED_DATA_PACKET_SIZE);
+            size_t len = live_api_send_queue_get_data(ctx->send_list,
+                    task->topic_id, packet.data, max_bytes, byte_offset);
+
+            if(len > max_bytes) {
+                len = max_bytes;
+                ctx->log_error("live_api: too many bytes from get_data");
+            }
+
+            uint32_t crc = task_state->crc;
+            // TODO calculate new crc
+
+            // Append crc32 to last data
+            if(is_last) {
+                memcpy(packet.data+len, &crc, sizeof(crc));
+            }
+
+            if(MQTT_client_publish(&ctx->mqtt, topic, packet.as_bytes,
+                sizeof(packet.header) + len)) {
+                ctx->current_task_state.offset+= 1;
+                ctx->current_task_state.crc = crc;
+                return;
+            }
+
+        // this task is a subtask: only send an empty 'announce' packet
+        } else {
+
+            packet.header.packet_number = 0;
+
+            // reserve space for all bytes including a crc32
+            packet.header.total_packets = calculate_num_packets(task->size);
+
+            // Send an empty packet at offset 0: just a header.
+            // Eventually, we will re-send packet 0 with the actual contents
+            if(MQTT_client_publish(&ctx->mqtt, topic, packet.as_bytes,
+                        sizeof(packet.header))) {
+                return;
+            }
+        }
+        ctx->log_warning("publish failed (type fixeddata)");
+
+
+    // unknown task
+    } else {
+        ctx->log_warning("task type '%d' not supported!", task->type);
+        task->type = LIVE_API_TASK_NONE;
     }
 }
 
@@ -391,6 +496,12 @@ static void state_error(LiveAPI *ctx)
 }
 
 
+static size_t calculate_num_packets(size_t num_data_bytes)
+{
+    const size_t num_bytes = sizeof(((LiveAPISendTaskState*)0)->crc)
+        + num_data_bytes;
+    return divide_round_up(num_bytes, LIVE_API_FIXED_DATA_PACKET_SIZE);
+}
 
 
 /**

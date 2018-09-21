@@ -42,6 +42,10 @@ CPM_AddModule("mqtt_c"
     GIT_TAG "0.6.0"
     EXPORT_MODULE TRUE)
 
+CPM_AddModule("c_utils"
+    GIT_REPOSITORY "https://github.com/JitterCompany/c_utils.git"
+    GIT_TAG "1.4.5")
+
 CPM_AddModule("cpm_jsmn"
     GIT_REPOSITORY "https://github.com/JitterCompany/cpm_jsmn.git"
     GIT_TAG "1.0.0")

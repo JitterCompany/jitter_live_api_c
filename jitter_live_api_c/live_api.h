@@ -43,6 +43,11 @@ enum LiveAPIState {
     LIVE_API_BYE_WAIT,
     LIVE_API_ERROR,
 };
+typedef struct {
+    size_t offset;
+    size_t total;
+    uint32_t crc;
+} LiveAPISendTaskState;
 
 
 typedef struct {
@@ -55,6 +60,7 @@ typedef struct {
     char username[LIVE_API_MAX_USERNAME_LEN + 1];
     enum LiveAPIState state;
     LiveAPISendTask current_task;
+    LiveAPISendTaskState current_task_state;
 
     // periodically try to go offline
     TimestampFunc time_func;
