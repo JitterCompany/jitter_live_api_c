@@ -2,6 +2,8 @@
 #include <string.h>
 #include <stdio.h>
 #include "live_api_parse.h"
+// TODO move crc32 to some package? maybe c_utils?
+#include "crc32.h"
 #include <c_utils/round.h>
 
 // TODO tune these values
@@ -419,10 +421,10 @@ static void state_idle(LiveAPI *ctx)
                 ctx->log_error("live_api: too many bytes from get_data");
             }
 
-            uint32_t crc = task_state->crc;
-            // TODO calculate new crc
+            // calculate the new crc32 value
+            uint32_t crc = crc32b(packet.data, len, task_state->crc);
 
-            // Append crc32 to last data
+            // Last packet: append crc32 to data
             if(is_last) {
                 memcpy(packet.data+len, &crc, sizeof(crc));
             }
