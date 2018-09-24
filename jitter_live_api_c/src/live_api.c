@@ -453,8 +453,7 @@ static bool is_verified(const LiveAPI *ctx)
     const StorageHAL *storage = &ctx->storage;
     void *storage_ctx = storage->ctx;
     char res[64];
-    return storage->read(storage_ctx, RESOURCE_VERIFIED,
-                res, sizeof(res));
+    return storage->read(storage_ctx, RESOURCE_VERIFIED, res, sizeof(res));
 }
 
 
