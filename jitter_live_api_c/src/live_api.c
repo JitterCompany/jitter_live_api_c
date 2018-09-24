@@ -2,32 +2,15 @@
 #include <string.h>
 #include <stdio.h>
 #include "live_api_parse.h"
-// TODO move crc32 to some package? maybe c_utils?
-#include "crc32.h"
-#include <c_utils/round.h>
+#include "fixed_data.h"
+#include "live_api_priv.h"
+#include "mqtt.h"
 
 // TODO tune these values
 #define KEEPALIVE_INTERVAL 30
 #define MQTT_TIMEOUT 30
 #define OFFLINE_REQUEST_INTERVAL 5
 
-typedef struct {
-    uint16_t packet_number;
-    uint16_t total_packets;
-} FixedDataPacketHeader;
-
-typedef union {
-    struct {
-        FixedDataPacketHeader header;
-        uint8_t data[LIVE_API_FIXED_DATA_PACKET_SIZE];
-    };
-    uint8_t as_bytes[sizeof(FixedDataPacketHeader) + LIVE_API_FIXED_DATA_PACKET_SIZE];
-} FixedDataPacket;
-
-typedef struct {
-    char username[LIVE_API_MAX_USERNAME_LEN];
-    char password[64];
-} LoginCredentials;
 
 // forward declarations
 
@@ -58,8 +41,6 @@ static void on_message(void *void_ctx, const char *topic,
 static bool get_login_credentials(const LiveAPI *ctx, LoginCredentials *result);
 static bool is_verified(const LiveAPI *ctx);
 
-// fixed-data related
-static size_t calculate_num_packets(size_t num_data_bytes);
 
 typedef void(*LiveAPIStateFunc)(LiveAPI *ctx);
 static const LiveAPIStateFunc g_state[] = {
@@ -101,7 +82,7 @@ void live_api_init(LiveAPI *ctx, StorageHAL storage,
     memset(ctx->username, 0, sizeof(ctx->username));
     ctx->state = LIVE_API_NONE;
     memset(&ctx->current_task, 0, sizeof(LiveAPISendTask));
-    memset(&ctx->current_task_state, 0, sizeof(LiveAPISendTaskState));
+    memset(&ctx->fixed_data_state, 0, sizeof(LiveAPISendTaskState));
 
     ctx->time_func = time_func;
     ctx->offline_timestamp = 0;
@@ -146,9 +127,10 @@ static bool update_current_task(LiveAPI *ctx)
         return true;
     }
     if(live_api_send_queue_get_task(ctx->send_list, &ctx->current_task)) {
-        ctx->current_task_state.offset = 0;
-        ctx->current_task_state.total = calculate_num_packets(ctx->current_task.size);
-        ctx->current_task_state.crc = 0;
+        ctx->fixed_data_state.offset = 0;
+        ctx->fixed_data_state.total = fixed_data_calculate_num_packets(
+                ctx->current_task.size);
+        ctx->fixed_data_state.crc = 0;
         return true;
     }
     return false;
@@ -321,21 +303,15 @@ static void state_register(LiveAPI *ctx)
 
 static void state_verify(LiveAPI *ctx)
 {
-    char topic[64];
-    snprintf(topic, sizeof(topic),
-            "f/%s/verify", ctx->username);
-    if(MQTT_client_publish(&ctx->mqtt, topic, NULL, 0)) {
+    if(publish_mqtt(ctx, "verify", NULL, 0)) {
         ctx->log_debug("live_api: sent 'verify' request...");
         set_state(ctx, LIVE_API_VERIFY_WAIT);
     }
 }
 static void state_hi(LiveAPI *ctx)
 {
-    char topic[64];
     const uint8_t msg[] = {1};
-    snprintf(topic, sizeof(topic),
-            "f/%s/hi", ctx->username);
-    if(MQTT_client_publish(&ctx->mqtt, topic, msg, sizeof(msg))) {
+    if(publish_mqtt(ctx, "hi", msg, sizeof(msg))) {
         ctx->log_debug("live_api: sent 'hi'...");
 
         set_state(ctx, LIVE_API_IDLE);
@@ -364,17 +340,14 @@ static void state_idle(LiveAPI *ctx)
         }
     }
 
-    char topic[64];
-    snprintf(topic, sizeof(topic),
-            "f/%s/%s", ctx->username, task->topic);
-
     // 'plain' task: publish it and mark it as 'done'
     if(task->type == LIVE_API_TASK_PLAIN) {
 
         uint8_t buffer[LIVE_API_MAX_SEND_LEN];
         const size_t len = live_api_send_queue_get_data(ctx->send_list,
                 task->topic_id, buffer, sizeof(buffer), 0);
-        if(MQTT_client_publish(&ctx->mqtt, topic, buffer, len)) {
+
+        if(publish_mqtt(ctx, task->topic, buffer, len)) {
             live_api_send_queue_task_done(ctx->send_list, task->topic_id);
             task->type = LIVE_API_TASK_NONE;
         } else {
@@ -386,72 +359,7 @@ static void state_idle(LiveAPI *ctx)
     // or send an empty 'announce' chunk if another task is busy
     } else if(task->type == LIVE_API_TASK_FIXED_DATA) {
 
-        // TODO create a new file with the fixeddata handling logic,
-        // this function is getting tooo long
-        // TODO handle incoming acks to update offset and finish the thask
-
-        FixedDataPacket packet;
-
-        // send the next chunk for this fixeddata task
-        if(task != &sub_task) {
-            LiveAPISendTaskState *task_state = &ctx->current_task_state;
-            if(task_state->offset >= task_state->total) {
-                // all packets already sent, waiting for ack
-                return;
-            }
-            packet.header.packet_number = task_state->offset;
-            packet.header.total_packets = task_state->total;
-
-            const bool is_last = ((packet.header.packet_number + 1)
-                    == packet.header.total_packets);
-
-            // the last packet includes the crc32 checksum
-            size_t max_bytes = sizeof(packet.data);
-            if(is_last) {
-                max_bytes-= sizeof(task_state->crc);
-            }
-            
-            const size_t byte_offset = (task_state->offset
-                    * LIVE_API_FIXED_DATA_PACKET_SIZE);
-            size_t len = live_api_send_queue_get_data(ctx->send_list,
-                    task->topic_id, packet.data, max_bytes, byte_offset);
-
-            if(len > max_bytes) {
-                len = max_bytes;
-                ctx->log_error("live_api: too many bytes from get_data");
-            }
-
-            // calculate the new crc32 value
-            uint32_t crc = crc32b(packet.data, len, task_state->crc);
-
-            // Last packet: append crc32 to data
-            if(is_last) {
-                memcpy(packet.data+len, &crc, sizeof(crc));
-            }
-
-            if(MQTT_client_publish(&ctx->mqtt, topic, packet.as_bytes,
-                sizeof(packet.header) + len)) {
-                ctx->current_task_state.offset+= 1;
-                ctx->current_task_state.crc = crc;
-                return;
-            }
-
-        // this task is a subtask: only send an empty 'announce' packet
-        } else {
-
-            packet.header.packet_number = 0;
-
-            // reserve space for all bytes including a crc32
-            packet.header.total_packets = calculate_num_packets(task->size);
-
-            // Send an empty packet at offset 0: just a header.
-            // Eventually, we will re-send packet 0 with the actual contents
-            if(MQTT_client_publish(&ctx->mqtt, topic, packet.as_bytes,
-                        sizeof(packet.header))) {
-                return;
-            }
-        }
-        ctx->log_warning("publish failed (type fixeddata)");
+        fixed_data_send(ctx, task, (task == &sub_task));
 
 
     // unknown task
@@ -463,10 +371,8 @@ static void state_idle(LiveAPI *ctx)
 
 static void state_want_offline(LiveAPI *ctx)
 {
-    char topic[64];
     const uint8_t msg[] = {0};
-    snprintf(topic, sizeof(topic), "f/%s/hi", ctx->username);
-    if(MQTT_client_publish(&ctx->mqtt, topic, msg, sizeof(msg))) {
+    if(publish_mqtt(ctx, "hi", msg, sizeof(msg))) {
         ctx->log_debug("live_api: sent offline request...");
         set_state(ctx, LIVE_API_WANT_OFFLINE_WAIT);
     }
@@ -474,9 +380,7 @@ static void state_want_offline(LiveAPI *ctx)
 
 static void state_bye(LiveAPI *ctx)
 {
-    char topic[64];
-    snprintf(topic, sizeof(topic), "f/%s/bye", ctx->username);
-    if(MQTT_client_publish(&ctx->mqtt, topic, NULL, 0)) {
+    if(publish_mqtt(ctx, "bye", NULL, 0)) {
         ctx->log_debug("live_api: sent bye...");
         set_state(ctx, LIVE_API_BYE_WAIT);
     }
@@ -495,14 +399,6 @@ static void state_error(LiveAPI *ctx)
     ctx->log_warning("live_api: Error! Something went wrong...");
     MQTT_client_disconnect(&ctx->mqtt);
     set_state(ctx, LIVE_API_NONE);
-}
-
-
-static size_t calculate_num_packets(size_t num_data_bytes)
-{
-    const size_t num_bytes = sizeof(((LiveAPISendTaskState*)0)->crc)
-        + num_data_bytes;
-    return divide_round_up(num_bytes, LIVE_API_FIXED_DATA_PACKET_SIZE);
 }
 
 
@@ -648,6 +544,10 @@ static void on_message(void *void_ctx, const char *topic,
                 set_state(ctx, LIVE_API_IDLE);
             }
         }
+    } else if(fixed_data_handle_ack(ctx, topic, payload, sizeof_payload)) {
+        ctx->log_debug("live_api: handled ack '%s'", topic);
+    } else {
+        ctx->log_debug("live_api: unhandled msg '%s'", topic);
     }
 }
 
