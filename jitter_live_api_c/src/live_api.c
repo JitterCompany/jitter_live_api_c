@@ -82,7 +82,8 @@ void live_api_init(LiveAPI *ctx, StorageHAL storage,
     memset(ctx->username, 0, sizeof(ctx->username));
     ctx->state = LIVE_API_NONE;
     memset(&ctx->current_send_task, 0, sizeof(LiveAPISendTask));
-    memset(&ctx->fixed_data_state, 0, sizeof(LiveAPISendTaskState));
+    memset(&ctx->fixed_send_state, 0, sizeof(LiveAPISendFixedState));
+    memset(&ctx->fixed_receive_state, 0, sizeof(LiveAPIReceiveFixedState));
 
     ctx->rx_topics = NULL;
     ctx->rx_topic_count = 0;

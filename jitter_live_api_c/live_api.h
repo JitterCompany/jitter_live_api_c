@@ -47,7 +47,18 @@ typedef struct {
     size_t offset;
     size_t total;
     uint32_t crc;
-} LiveAPISendTaskState;
+} LiveAPISendFixedState;
+
+typedef struct {
+    size_t offset;
+    size_t total;
+    uint32_t crc;
+    
+    const LiveAPITopic *topic;
+    bool valid;
+    size_t fail_count;
+
+} LiveAPIReceiveFixedState;
 
 
 typedef struct {
@@ -62,7 +73,10 @@ typedef struct {
 
     // send state
     LiveAPISendTask current_send_task;
-    LiveAPISendTaskState fixed_data_state;
+    LiveAPISendFixedState fixed_send_state;         // fixed-size send state
+
+    // receive state
+    LiveAPIReceiveFixedState fixed_receive_state;   // fixed-size receive state
 
     // a list of topics to pass to live_api_receive()
     const LiveAPITopic *rx_topics;

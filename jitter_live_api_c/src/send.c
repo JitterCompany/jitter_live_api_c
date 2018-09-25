@@ -9,10 +9,10 @@ bool send_update_current_task(LiveAPI *ctx)
         return true;
     }
     if(live_api_send_queue_get_task(ctx->send_list, &ctx->current_send_task)) {
-        ctx->fixed_data_state.offset = 0;
-        ctx->fixed_data_state.total = fixed_data_calculate_num_packets(
+        ctx->fixed_send_state.offset = 0;
+        ctx->fixed_send_state.total = fixed_data_calculate_num_packets(
                 ctx->current_send_task.size);
-        ctx->fixed_data_state.crc = 0;
+        ctx->fixed_send_state.crc = 0;
         return true;
     }
     return false;

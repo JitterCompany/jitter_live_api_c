@@ -5,6 +5,21 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+typedef struct {
+    uint16_t packet_number;
+    uint16_t total_packets;
+} FixedDataPacketHeader;
+
+typedef union {
+    struct {
+        FixedDataPacketHeader header;
+        uint8_t data[LIVE_API_FIXED_DATA_PACKET_SIZE];
+    };
+    uint8_t as_bytes[sizeof(FixedDataPacketHeader) + LIVE_API_FIXED_DATA_PACKET_SIZE];
+} FixedDataPacket;
+
+
+
 // Try to make send progress on the current fixed_data task
 void fixed_data_send(LiveAPI *ctx, LiveAPISendTask *task, const bool is_subtask);
 
@@ -14,6 +29,10 @@ size_t fixed_data_calculate_num_packets(size_t num_data_bytes);
 
 // Detect if the given topic is an 'ack' topic, try to handle the ack if valid
 bool fixed_data_handle_ack(LiveAPI *ctx, const char *topic,
+        uint8_t *payload, const size_t sizeof_payload);
+
+// Handle incoming message: chunk of a file
+bool fixed_data_handle_message(LiveAPI *ctx, const LiveAPITopic *t,
         uint8_t *payload, const size_t sizeof_payload);
 
 #endif

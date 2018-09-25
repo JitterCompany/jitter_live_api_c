@@ -1,4 +1,8 @@
 #include "receive.h"
+#include "fixed_data.h"
+
+// 'callbacks' to library user
+#include "live_api_receive.h"
 
 #include <string.h>
 
@@ -16,9 +20,14 @@ bool receive_handle_incoming(LiveAPI *ctx, const char *topic,
     }
 
     ctx->log_debug("live_api: receive msg on '%s'", topic);
-    // TODO handle the message over to the user, handle fixeddata etc
-    //
-    return true;
+    if(t->type == LIVE_API_TASK_PLAIN) {
+        live_api_receive(t, payload, sizeof_payload);
+        return true;
+    }
+    if(t->type == LIVE_API_TASK_FIXED_DATA) {
+        return fixed_data_handle_message(ctx, t, payload, sizeof_payload);
+    }
+    return false;
 }
 
 static const LiveAPITopic * find_topic(const LiveAPI *ctx, const char *topic)

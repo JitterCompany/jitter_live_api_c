@@ -1,11 +1,11 @@
 #include "fixed_data.h"
 #include "live_api.h"
-#include "live_api_priv.h"
 
 // TODO move crc32 to some package? maybe c_utils?
 #include "crc32.h"
 #include "mqtt.h"
 
+#include "live_api_receive.h"
 #include <c_utils/round.h>
 #include <c_utils/assert.h>
 
@@ -16,11 +16,27 @@
 
 size_t fixed_data_calculate_num_packets(size_t num_data_bytes)
 {
-    const size_t num_bytes = sizeof(((LiveAPISendTaskState*)0)->crc)
+    const size_t num_bytes = sizeof(((LiveAPISendFixedState*)0)->crc)
         + num_data_bytes;
     return divide_round_up(num_bytes, LIVE_API_FIXED_DATA_PACKET_SIZE);
 }
 
+bool fixed_data_handle_message(LiveAPI *ctx, const LiveAPITopic *t,
+        uint8_t *payload, const size_t sizeof_payload)
+{
+        bool is_complete = false;
+        size_t byte_offset = 0;
+
+        // TODO
+        // - extract data
+        // - calculate offset from header
+        // - send ACK when appropriate
+        // - determine when finished
+
+        live_api_receive_fixed(t, payload, sizeof_payload,
+                byte_offset, is_complete);
+        return true;
+}
 
 bool fixed_data_handle_ack(LiveAPI *ctx, const char *topic,
         uint8_t *payload, const size_t sizeof_payload)
@@ -49,14 +65,14 @@ bool fixed_data_handle_ack(LiveAPI *ctx, const char *topic,
     ctx->log_debug("live_api: rx ack=%u", ack);
     
     // Total should always be >= 1. If not, it is a bug..
-    assert(ctx->fixed_data_state.total);
+    assert(ctx->fixed_send_state.total);
 
-    if(ack >= ctx->fixed_data_state.total) {
+    if(ack >= ctx->fixed_send_state.total) {
         ctx->log_warning("live_api: got forced ack 0x%X on '%s'",
                 ack, task->topic);
-        ack = ctx->fixed_data_state.total - 1;
+        ack = ctx->fixed_send_state.total - 1;
     }
-    if((ack + 1) == ctx->fixed_data_state.total) {
+    if((ack + 1) == ctx->fixed_send_state.total) {
 
         // All data is acked: done!
         live_api_send_queue_task_done(ctx->send_list, task->topic_id);
@@ -64,10 +80,10 @@ bool fixed_data_handle_ack(LiveAPI *ctx, const char *topic,
         task->type = LIVE_API_TASK_NONE;
     } else {
         ctx->log_debug("live_api: task '%s' busy %u/%u",
-                task->topic, (ack+1), ctx->fixed_data_state.total);
+                task->topic, (ack+1), ctx->fixed_send_state.total);
     }
 
-    ctx->fixed_data_state.offset = ack;
+    ctx->fixed_send_state.offset = ack;
     return true;
 }
 
@@ -78,7 +94,7 @@ void fixed_data_send(LiveAPI *ctx, LiveAPISendTask *task, const bool is_subtask)
 
     // send the next chunk for this fixeddata task
     if(!is_subtask) {
-        LiveAPISendTaskState *task_state = &ctx->fixed_data_state;
+        LiveAPISendFixedState *task_state = &ctx->fixed_send_state;
         if(task_state->offset >= task_state->total) {
             // all packets already sent, waiting for ack
             return;
@@ -115,8 +131,8 @@ void fixed_data_send(LiveAPI *ctx, LiveAPISendTask *task, const bool is_subtask)
 
         if(publish_mqtt(ctx, task->topic, packet.as_bytes,
                     sizeof(packet.header) + len)) {
-            ctx->fixed_data_state.offset+= 1;
-            ctx->fixed_data_state.crc = crc;
+            ctx->fixed_send_state.offset+= 1;
+            ctx->fixed_send_state.crc = crc;
             ctx->log_debug("live_api: published fixeddata packet %u/%u",
                     packet.header.packet_number,
                     packet.header.total_packets);
