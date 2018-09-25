@@ -2,7 +2,8 @@
 #include <string.h>
 #include <stdio.h>
 #include "live_api_parse.h"
-#include "fixed_data.h"
+#include "send.h"
+#include "receive.h"
 #include "live_api_priv.h"
 #include "mqtt.h"
 
@@ -19,7 +20,6 @@ static const char *state_to_str(enum LiveAPIState state);
 static void set_state(LiveAPI *ctx, enum LiveAPIState new_state);
 static void handle_state_machine(LiveAPI *ctx);
 static void ensure_connection(LiveAPI *ctx);
-static bool update_current_task(LiveAPI *ctx);
 
 // state handlers
 static void state_void(LiveAPI *ctx){}
@@ -81,8 +81,11 @@ void live_api_init(LiveAPI *ctx, StorageHAL storage,
     ctx->server_port = server_port;
     memset(ctx->username, 0, sizeof(ctx->username));
     ctx->state = LIVE_API_NONE;
-    memset(&ctx->current_task, 0, sizeof(LiveAPISendTask));
+    memset(&ctx->current_send_task, 0, sizeof(LiveAPISendTask));
     memset(&ctx->fixed_data_state, 0, sizeof(LiveAPISendTaskState));
+
+    ctx->rx_topics = NULL;
+    ctx->rx_topic_count = 0;
 
     ctx->time_func = time_func;
     ctx->offline_timestamp = 0;
@@ -111,7 +114,7 @@ void live_api_set_logging(LiveAPI *ctx,
 
 void live_api_poll(LiveAPI *ctx)
 {
-    if(update_current_task(ctx)) {
+    if(send_update_current_task(ctx)) {
         ensure_connection(ctx);
     }
 
@@ -120,21 +123,13 @@ void live_api_poll(LiveAPI *ctx)
     }
 }
 
-// try to get a current_task to work on
-static bool update_current_task(LiveAPI *ctx)
+void live_api_update_subscriptions(LiveAPI *ctx,
+        const LiveAPITopic *topic_list, size_t num_topics)
 {
-    if(ctx->current_task.type != LIVE_API_TASK_NONE) {
-        return true;
-    }
-    if(live_api_send_queue_get_task(ctx->send_list, &ctx->current_task)) {
-        ctx->fixed_data_state.offset = 0;
-        ctx->fixed_data_state.total = fixed_data_calculate_num_packets(
-                ctx->current_task.size);
-        ctx->fixed_data_state.crc = 0;
-        return true;
-    }
-    return false;
+    ctx->rx_topics = topic_list;
+    ctx->rx_topic_count = num_topics;
 }
+
 
 // ensure there is a connection: create a new connection if required
 static void ensure_connection(LiveAPI *ctx)
@@ -319,8 +314,7 @@ static void state_hi(LiveAPI *ctx)
 }
 static void state_idle(LiveAPI *ctx)
 {
-    LiveAPISendTask *task = &ctx->current_task;
-    if(task->type == LIVE_API_TASK_NONE) {
+    if(ctx->current_send_task.type == LIVE_API_TASK_NONE) {
 
         const int diff = ctx->time_func() - ctx->offline_timestamp;
         if(diff > OFFLINE_REQUEST_INTERVAL) {
@@ -332,41 +326,8 @@ static void state_idle(LiveAPI *ctx)
     // while there is something to do, reset the offline interval
     ctx->offline_timestamp = ctx->time_func();
 
-    // even while a fixeddata task is busy, other tasks have more priority
-    LiveAPISendTask sub_task;
-    if(task->type == LIVE_API_TASK_FIXED_DATA) {
-        if(live_api_send_queue_get_task(ctx->send_list, &sub_task)) {
-            task = &sub_task;
-        }
-    }
+    send(ctx);
 
-    // 'plain' task: publish it and mark it as 'done'
-    if(task->type == LIVE_API_TASK_PLAIN) {
-
-        uint8_t buffer[LIVE_API_MAX_SEND_LEN];
-        const size_t len = live_api_send_queue_get_data(ctx->send_list,
-                task->topic_id, buffer, sizeof(buffer), 0);
-
-        if(publish_mqtt(ctx, task->topic, buffer, len)) {
-            live_api_send_queue_task_done(ctx->send_list, task->topic_id);
-            task->type = LIVE_API_TASK_NONE;
-        } else {
-            ctx->log_warning("publish failed");
-        }
-
-
-    // 'fixeddata' task: send data in chunks,
-    // or send an empty 'announce' chunk if another task is busy
-    } else if(task->type == LIVE_API_TASK_FIXED_DATA) {
-
-        fixed_data_send(ctx, task, (task == &sub_task));
-
-
-    // unknown task
-    } else {
-        ctx->log_warning("task type '%d' not supported!", task->type);
-        task->type = LIVE_API_TASK_NONE;
-    }
 }
 
 static void state_want_offline(LiveAPI *ctx)
@@ -543,8 +504,12 @@ static void on_message(void *void_ctx, const char *topic,
                 set_state(ctx, LIVE_API_IDLE);
             }
         }
-    } else if(fixed_data_handle_ack(ctx, topic, payload, sizeof_payload)) {
-        ctx->log_debug("live_api: handled ack '%s'", topic);
+    } else if(send_handle_incoming(ctx, topic, payload, sizeof_payload)) {
+        ctx->log_debug("live_api: send_handle_incoming handled '%s'", topic);
+
+    } else if(receive_handle_incoming(ctx, topic, payload, sizeof_payload)) {
+        ctx->log_debug("live_api: receive_handle_incoming handled '%s'", topic);
+
     } else {
         ctx->log_debug("live_api: unhandled msg '%s'", topic);
     }

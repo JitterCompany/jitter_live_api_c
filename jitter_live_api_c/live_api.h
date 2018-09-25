@@ -59,8 +59,14 @@ typedef struct {
     int server_port;
     char username[LIVE_API_MAX_USERNAME_LEN + 1];
     enum LiveAPIState state;
-    LiveAPISendTask current_task;
+
+    // send state
+    LiveAPISendTask current_send_task;
     LiveAPISendTaskState fixed_data_state;
+
+    // a list of topics to pass to live_api_receive()
+    const LiveAPITopic *rx_topics;
+    size_t rx_topic_count;
 
     // periodically try to go offline
     TimestampFunc time_func;
@@ -89,6 +95,8 @@ void live_api_init(LiveAPI *ctx, StorageHAL storage,
 
 void live_api_set_logging(LiveAPI *ctx,
         LogFunc debug, LogFunc warn, LogFunc err);
+void live_api_update_subscriptions(LiveAPI *ctx,
+        const LiveAPITopic *topic, size_t num_topics);
 void live_api_poll(LiveAPI *ctx);
 
 #endif

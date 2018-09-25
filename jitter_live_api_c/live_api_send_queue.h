@@ -4,19 +4,14 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+#include <jitter_live_api_c/live_api_topic.h>
+
 // TODO tweak this value: 512 is probably a nice default size?
 #ifndef LIVE_API_FIXED_DATA_PACKET_SIZE
     #define LIVE_API_FIXED_DATA_PACKET_SIZE 32
 #endif
 
 #define LIVE_API_FIXED_DATA_ACKTEST_SIZE ((7*LIVE_API_FIXED_DATA_PACKET_SIZE)-4)
-
-enum LiveAPITaskType {
-    LIVE_API_TASK_NONE = 0,
-
-    LIVE_API_TASK_PLAIN,
-    LIVE_API_TASK_FIXED_DATA,
-};
 
 typedef struct {
     size_t topic_id;

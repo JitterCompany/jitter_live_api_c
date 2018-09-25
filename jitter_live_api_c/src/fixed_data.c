@@ -25,7 +25,7 @@ size_t fixed_data_calculate_num_packets(size_t num_data_bytes)
 bool fixed_data_handle_ack(LiveAPI *ctx, const char *topic,
         uint8_t *payload, const size_t sizeof_payload)
 {
-    LiveAPISendTask *task = &ctx->current_task;
+    LiveAPISendTask *task = &ctx->current_send_task;
 
     if(task->type != LIVE_API_TASK_FIXED_DATA) {
         return false;
