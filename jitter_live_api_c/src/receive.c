@@ -38,7 +38,7 @@ static const LiveAPITopic * find_topic(const LiveAPI *ctx, const char *topic)
 
     const LiveAPITopic *t= ctx->rx_topics;
     for(size_t i=0;i<ctx->rx_topic_count;i++,t++) {
-        if(t->topic && (0 == strcmp(t->topic, topic))) {
+        if(t->name && (0 == strcmp(t->name, topic))) {
             return t;
         }
     }

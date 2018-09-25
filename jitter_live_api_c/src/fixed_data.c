@@ -24,18 +24,38 @@ size_t fixed_data_calculate_num_packets(size_t num_data_bytes)
 bool fixed_data_handle_message(LiveAPI *ctx, const LiveAPITopic *t,
         uint8_t *payload, const size_t sizeof_payload)
 {
-        bool is_complete = false;
-        size_t byte_offset = 0;
+    FixedDataPacketHeader header;
+    if(sizeof_payload < sizeof(header)) {
+        ctx->log_warning("live_api: malformed message on '%s'", t->name);
+        return false;
+    }
+    // parse payload into header + data
+    memcpy(&header, payload, sizeof(header));
+    const uint8_t *data = payload + sizeof(header);
+    const size_t sizeof_data = sizeof_payload - sizeof(header);
 
-        // TODO
-        // - extract data
-        // - calculate offset from header
-        // - send ACK when appropriate
-        // - determine when finished
+    LiveAPIReceiveFixedState *state = &ctx->fixed_receive_state;
+    if(!header.packet_number) {
+        ctx->log_debug("live_api: (re)starting fixed rx '%s'", t->name);
+        if(state->valid) {
+            ctx->log_warning("live_api: removing old data from rx '%s'",
+                    state->topic->name);
+        }
+        // TODO IMPLEMENT (SEE PY)
+    }
+        
+    bool is_complete = false;
+    size_t byte_offset = 0;
 
-        live_api_receive_fixed(t, payload, sizeof_payload,
-                byte_offset, is_complete);
-        return true;
+    // TODO
+    // - extract data
+    // - calculate offset from header
+    // - send ACK when appropriate
+    // - determine when finished
+
+    live_api_receive_fixed(t, payload, sizeof_payload,
+            byte_offset, is_complete);
+    return true;
 }
 
 bool fixed_data_handle_ack(LiveAPI *ctx, const char *topic,
@@ -53,7 +73,7 @@ bool fixed_data_handle_ack(LiveAPI *ctx, const char *topic,
     }
 
     char expected_topic[64];
-    snprintf(expected_topic, sizeof(expected_topic), "%s/ack", task->topic);
+    snprintf(expected_topic, sizeof(expected_topic), "%s/ack", task->topic_name);
     
     if(0 != strcmp(expected_topic, topic)) {
         ctx->log_warning("live_api: unexpected ack '%s'", topic);
@@ -69,18 +89,18 @@ bool fixed_data_handle_ack(LiveAPI *ctx, const char *topic,
 
     if(ack >= ctx->fixed_send_state.total) {
         ctx->log_warning("live_api: got forced ack 0x%X on '%s'",
-                ack, task->topic);
+                ack, task->topic_name);
         ack = ctx->fixed_send_state.total - 1;
     }
     if((ack + 1) == ctx->fixed_send_state.total) {
 
         // All data is acked: done!
         live_api_send_queue_task_done(ctx->send_list, task->topic_id);
-        ctx->log_debug("live_api: task '%s' is done", task->topic);
+        ctx->log_debug("live_api: task '%s' is done", task->topic_name);
         task->type = LIVE_API_TASK_NONE;
     } else {
         ctx->log_debug("live_api: task '%s' busy %u/%u",
-                task->topic, (ack+1), ctx->fixed_send_state.total);
+                task->topic_name, (ack+1), ctx->fixed_send_state.total);
     }
 
     ctx->fixed_send_state.offset = ack;
@@ -129,7 +149,7 @@ void fixed_data_send(LiveAPI *ctx, LiveAPISendTask *task, const bool is_subtask)
             memcpy(packet.data+len, &crc, sizeof(crc));
         }
 
-        if(publish_mqtt(ctx, task->topic, packet.as_bytes,
+        if(publish_mqtt(ctx, task->topic_name, packet.as_bytes,
                     sizeof(packet.header) + len)) {
             ctx->fixed_send_state.offset+= 1;
             ctx->fixed_send_state.crc = crc;
@@ -149,7 +169,7 @@ void fixed_data_send(LiveAPI *ctx, LiveAPISendTask *task, const bool is_subtask)
 
         // Send an empty packet at offset 0: just a header.
         // Eventually, we will re-send packet 0 with the actual contents
-        if(publish_mqtt(ctx, task->topic, packet.as_bytes,
+        if(publish_mqtt(ctx, task->topic_name, packet.as_bytes,
                     sizeof(packet.header))) {
             ctx->log_debug("live_api: published empty fixeddata packet %u/%u",
                     packet.header.packet_number,

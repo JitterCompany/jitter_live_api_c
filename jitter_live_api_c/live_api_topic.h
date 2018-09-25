@@ -10,7 +10,7 @@ enum LiveAPITaskType {
 };
 
 typedef struct {
-    const char *topic;
+    const char *name;
     enum LiveAPITaskType type;
 } LiveAPITopic; 
 

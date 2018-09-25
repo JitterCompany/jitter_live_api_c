@@ -15,7 +15,7 @@
 
 typedef struct {
     size_t topic_id;
-    const char *topic;
+    const char *topic_name;
     enum LiveAPITaskType type;
     size_t size; // optional, depending on type
 } LiveAPISendTask; 

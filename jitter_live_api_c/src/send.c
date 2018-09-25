@@ -43,7 +43,7 @@ void send(LiveAPI *ctx)
         const size_t len = live_api_send_queue_get_data(ctx->send_list,
                 task->topic_id, buffer, sizeof(buffer), 0);
 
-        if(publish_mqtt(ctx, task->topic, buffer, len)) {
+        if(publish_mqtt(ctx, task->topic_name, buffer, len)) {
             live_api_send_queue_task_done(ctx->send_list, task->topic_id);
             task->type = LIVE_API_TASK_NONE;
         } else {
