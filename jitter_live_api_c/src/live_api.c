@@ -4,13 +4,17 @@
 #include "live_api_parse.h"
 #include "send.h"
 #include "receive.h"
-#include "live_api_priv.h"
 #include "mqtt.h"
 
 // TODO tune these values
 #define KEEPALIVE_INTERVAL 30
 #define MQTT_TIMEOUT 30
 #define OFFLINE_REQUEST_INTERVAL 5
+
+typedef struct {
+    char username[LIVE_API_MAX_USERNAME_LEN];
+    char password[64];
+} LoginCredentials;
 
 
 // forward declarations
@@ -328,6 +332,7 @@ static void state_idle(LiveAPI *ctx)
     ctx->offline_timestamp = ctx->time_func();
 
     send(ctx);
+    receive(ctx);
 
 }
 
@@ -508,8 +513,14 @@ static void on_message(void *void_ctx, const char *topic,
     } else if(send_handle_incoming(ctx, topic, payload, sizeof_payload)) {
         ctx->log_debug("live_api: send_handle_incoming handled '%s'", topic);
 
+        // while there is something to do, reset the offline interval
+        ctx->offline_timestamp = ctx->time_func();
+
     } else if(receive_handle_incoming(ctx, topic, payload, sizeof_payload)) {
         ctx->log_debug("live_api: receive_handle_incoming handled '%s'", topic);
+
+        // while there is something to do, reset the offline interval
+        ctx->offline_timestamp = ctx->time_func();
 
     } else {
         ctx->log_debug("live_api: unhandled msg '%s'", topic);

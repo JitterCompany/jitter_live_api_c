@@ -1,5 +1,5 @@
 #include "receive.h"
-#include "fixed_data.h"
+#include "fixed_data/fixed_data_rx.h"
 
 // 'callbacks' to library user
 #include "live_api_receive.h"
@@ -10,6 +10,10 @@
 //
 static const LiveAPITopic * find_topic(const LiveAPI *ctx, const char *topic);
 
+void receive(LiveAPI *ctx)
+{
+    fixed_data_rx_update(ctx);
+}
 
 bool receive_handle_incoming(LiveAPI *ctx, const char *topic,
         uint8_t *payload, const size_t sizeof_payload)
@@ -25,7 +29,8 @@ bool receive_handle_incoming(LiveAPI *ctx, const char *topic,
         return true;
     }
     if(t->type == LIVE_API_TASK_FIXED_DATA) {
-        return fixed_data_handle_message(ctx, t, payload, sizeof_payload);
+        fixed_data_rx_handle_message(ctx, t, payload, sizeof_payload);
+        return true;
     }
     return false;
 }

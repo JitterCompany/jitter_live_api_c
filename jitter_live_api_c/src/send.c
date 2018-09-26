@@ -1,6 +1,6 @@
 #include "send.h"
 #include "mqtt.h"
-#include "fixed_data.h"
+#include "fixed_data/fixed_data_tx.h"
 #include "live_api_send_queue.h"
 
 bool send_update_current_task(LiveAPI *ctx)
@@ -10,7 +10,7 @@ bool send_update_current_task(LiveAPI *ctx)
     }
     if(live_api_send_queue_get_task(ctx->send_list, &ctx->current_send_task)) {
         ctx->fixed_send_state.offset = 0;
-        ctx->fixed_send_state.total = fixed_data_calculate_num_packets(
+        ctx->fixed_send_state.total = fixed_data_tx_calculate_num_packets(
                 ctx->current_send_task.size);
         ctx->fixed_send_state.crc = 0;
         return true;
@@ -22,7 +22,7 @@ bool send_update_current_task(LiveAPI *ctx)
 bool send_handle_incoming(LiveAPI *ctx, const char *topic,
         uint8_t *payload, const size_t sizeof_payload)
 {
-    return fixed_data_handle_ack(ctx, topic, payload, sizeof_payload);
+    return fixed_data_tx_handle_ack(ctx, topic, payload, sizeof_payload);
 }
 
 void send(LiveAPI *ctx)
@@ -55,7 +55,7 @@ void send(LiveAPI *ctx)
     // or send an empty 'announce' chunk if another task is busy
     } else if(task->type == LIVE_API_TASK_FIXED_DATA) {
 
-        fixed_data_send(ctx, task, (task == &sub_task));
+        fixed_data_tx_send(ctx, task, (task == &sub_task));
 
 
     // unknown task

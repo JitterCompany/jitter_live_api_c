@@ -54,9 +54,11 @@ typedef struct {
     size_t total;
     uint32_t crc;
     
+    size_t byte_offset;
     const LiveAPITopic *topic;
-    bool valid;
     size_t fail_count;
+    bool valid;
+    uint8_t send_events;
 
 } LiveAPIReceiveFixedState;
 

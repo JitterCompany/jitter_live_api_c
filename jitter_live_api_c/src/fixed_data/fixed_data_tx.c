@@ -1,64 +1,25 @@
-#include "fixed_data.h"
 #include "live_api.h"
+#include "fixed_data_tx.h"
+#include "fixed_data_packet.h"
+#include "mqtt.h"
 
 // TODO move crc32 to some package? maybe c_utils?
 #include "crc32.h"
-#include "mqtt.h"
 
-#include "live_api_receive.h"
 #include <c_utils/round.h>
 #include <c_utils/assert.h>
 
 #include <string.h>
 #include <stdio.h>
 
-
-
-size_t fixed_data_calculate_num_packets(size_t num_data_bytes)
+size_t fixed_data_tx_calculate_num_packets(size_t num_data_bytes)
 {
     const size_t num_bytes = sizeof(((LiveAPISendFixedState*)0)->crc)
         + num_data_bytes;
     return divide_round_up(num_bytes, LIVE_API_FIXED_DATA_PACKET_SIZE);
 }
 
-bool fixed_data_handle_message(LiveAPI *ctx, const LiveAPITopic *t,
-        uint8_t *payload, const size_t sizeof_payload)
-{
-    FixedDataPacketHeader header;
-    if(sizeof_payload < sizeof(header)) {
-        ctx->log_warning("live_api: malformed message on '%s'", t->name);
-        return false;
-    }
-    // parse payload into header + data
-    memcpy(&header, payload, sizeof(header));
-    const uint8_t *data = payload + sizeof(header);
-    const size_t sizeof_data = sizeof_payload - sizeof(header);
-
-    LiveAPIReceiveFixedState *state = &ctx->fixed_receive_state;
-    if(!header.packet_number) {
-        ctx->log_debug("live_api: (re)starting fixed rx '%s'", t->name);
-        if(state->valid) {
-            ctx->log_warning("live_api: removing old data from rx '%s'",
-                    state->topic->name);
-        }
-        // TODO IMPLEMENT (SEE PY)
-    }
-        
-    bool is_complete = false;
-    size_t byte_offset = 0;
-
-    // TODO
-    // - extract data
-    // - calculate offset from header
-    // - send ACK when appropriate
-    // - determine when finished
-
-    live_api_receive_fixed(t, payload, sizeof_payload,
-            byte_offset, is_complete);
-    return true;
-}
-
-bool fixed_data_handle_ack(LiveAPI *ctx, const char *topic,
+bool fixed_data_tx_handle_ack(LiveAPI *ctx, const char *topic,
         uint8_t *payload, const size_t sizeof_payload)
 {
     LiveAPISendTask *task = &ctx->current_send_task;
@@ -107,8 +68,7 @@ bool fixed_data_handle_ack(LiveAPI *ctx, const char *topic,
     return true;
 }
 
-
-void fixed_data_send(LiveAPI *ctx, LiveAPISendTask *task, const bool is_subtask)
+void fixed_data_tx_send(LiveAPI *ctx, LiveAPISendTask *task, const bool is_subtask)
 {
     FixedDataPacket packet;
 
@@ -165,7 +125,7 @@ void fixed_data_send(LiveAPI *ctx, LiveAPISendTask *task, const bool is_subtask)
         packet.header.packet_number = 0;
 
         // reserve space for all bytes including a crc32
-        packet.header.total_packets = fixed_data_calculate_num_packets(task->size);
+        packet.header.total_packets = fixed_data_tx_calculate_num_packets(task->size);
 
         // Send an empty packet at offset 0: just a header.
         // Eventually, we will re-send packet 0 with the actual contents

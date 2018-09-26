@@ -5,7 +5,8 @@
  * The the byte reversal is avoided by shifting the crc reg right instead of
  * left and by using a reversed 32-bit word to represent the polynomial.
 */
-uint32_t crc32b(uint8_t *message, size_t sizeof_message, uint32_t prev_crc)
+uint32_t crc32b(const uint8_t *message, const size_t sizeof_message,
+        const uint32_t prev_crc)
 {
 
    //crc = 0xFFFFFFFF;
