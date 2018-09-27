@@ -22,6 +22,10 @@ enum ToSend {
 
 static void ack(LiveAPIReceiveFixedState *state, size_t offset)
 {
+    // If not valid, only FORCE_ACK (0xFFFF) is allowed
+    if(!state->valid && offset != 0xFFFF) {
+        return;
+    }
     // ACK should be sent, nothing else (any pending SEND_PROGRESS is cleared)
     state->offset = offset;
     state->send_events = SEND_ACK;
@@ -53,6 +57,7 @@ static void invalidate(LiveAPIReceiveFixedState *state, size_t offset)
         state->total = 0;
         state->byte_offset = 0;
         state->crc = 0;
+        state->send_events &= ~SEND_PROGRESS;
     }
 }
 
@@ -62,6 +67,7 @@ static void fail(LiveAPI *ctx, LiveAPIReceiveFixedState *state)
     // any 5 consecutive fails trigger a FORCE_ACK, even if they did not all
     // occur on the same topic.
     state->fail_count++;
+    
     if(state->fail_count >= 5) {
         invalidate(state, 0);
         ctx->log_warning("live_api: force_ack for '%s': too many fails",
@@ -103,26 +109,23 @@ void fixed_data_rx_handle_message(LiveAPI *ctx, const LiveAPITopic *topic,
     uint8_t *data = payload + sizeof(header);
     size_t sizeof_data = sizeof_payload - sizeof(header);
 
+    // Edge case 2: re-initialize state on receiving packet with id 0
     if(!header.packet_number) {
         ctx->log_debug("live_api: (re)starting fixed rx '%s'", topic->name);
         if(state->valid) {
             ctx->log_warning("live_api: removing old data from rx '%s'",
                     state->topic->name);
         }
-        memset(state, 0, sizeof(*state));
+        invalidate(state, 0);
     }
 
     if(!state->valid) {
         // packets start from zero: (re-)initialize
         if(!header.packet_number) {
-            state->offset = 0;
-            state->byte_offset = 0;
+            invalidate(state, 0);
             state->total = header.total_packets;
-            state->crc = 0;
-
             state->topic = topic;
             state->valid = true;
-            state->send_events = 0;
 
         // same topic and expected packet number: mark as 'valid'
         } else if((state->topic == topic)
@@ -163,9 +166,9 @@ void fixed_data_rx_handle_message(LiveAPI *ctx, const LiveAPITopic *topic,
     // Edge case 3: total_packets changed unexpectedly
     // If packets from multiple topics arrive interleaved, we cannot keep track
     // of both transfers: we drop one of them.
-    if(topic != state->topic) {
-        ctx->log_warning("live_api: drop packet %u for '%s': busy on other topic",
-                header.packet_number, topic->name);
+    if(header.total_packets != state->total) {
+        ctx->log_warning("live_api: drop packet %u for '%s': unexpected total %u",
+                header.packet_number, topic->name, header.total_packets);
         fail(ctx, state);
         ack(state, 0);
         invalidate(state, 0);
@@ -232,7 +235,7 @@ void fixed_data_rx_handle_message(LiveAPI *ctx, const LiveAPITopic *topic,
 
         ack(state, state->offset);
         reset_fails(state);
-        invalidate(state, 0);
+        invalidate(state, state->offset);
     }
 
     // send data to user 'callback'

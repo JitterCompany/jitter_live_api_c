@@ -28,6 +28,10 @@ bool send_handle_incoming(LiveAPI *ctx, const char *topic,
 void send(LiveAPI *ctx)
 {
     LiveAPISendTask *task = &ctx->current_send_task;
+    if(task->type == LIVE_API_TASK_NONE) {
+        return;
+    }
+
     // even while a fixeddata task is busy, other tasks have more priority
     LiveAPISendTask sub_task;
     if(task->type == LIVE_API_TASK_FIXED_DATA) {

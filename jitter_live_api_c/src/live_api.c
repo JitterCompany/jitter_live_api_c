@@ -319,6 +319,9 @@ static void state_hi(LiveAPI *ctx)
 }
 static void state_idle(LiveAPI *ctx)
 {
+    send(ctx);
+    receive(ctx);
+
     if(ctx->current_send_task.type == LIVE_API_TASK_NONE) {
 
         const int diff = ctx->time_func() - ctx->offline_timestamp;
@@ -330,10 +333,6 @@ static void state_idle(LiveAPI *ctx)
 
     // while there is something to do, reset the offline interval
     ctx->offline_timestamp = ctx->time_func();
-
-    send(ctx);
-    receive(ctx);
-
 }
 
 static void state_want_offline(LiveAPI *ctx)
