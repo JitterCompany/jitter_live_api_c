@@ -240,7 +240,7 @@ void fixed_data_rx_handle_message(LiveAPI *ctx, const LiveAPITopic *topic,
 
     // send data to user 'callback'
     live_api_receive_fixed(topic, data, sizeof_data,
-            state->offset, last_packet);
+            state->byte_offset, last_packet);
     state->byte_offset+= sizeof_data;
 }
 
